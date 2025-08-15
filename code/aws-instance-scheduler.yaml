@@ -1,0 +1,144 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Instance Scheduler for FinOps cost optimization'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [ dev, staging, prod ]
+    Description: Environment type for scheduling configuration
+
+  ScheduleName:
+    Type: String
+    Default: business-hours
+    Description: Name of the schedule to apply
+
+Resources:
+  # Instance Scheduler Stack
+  InstanceScheduler:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/solutions-reference/aws-instance-scheduler/latest/instance-scheduler.template
+      Parameters:
+        TagName: Schedule
+        DefaultTimezone: UTC
+        UseCloudWatchMetrics: 'Yes'
+        SendAnonymousData: 'No'
+        LogLevel: INFO
+        SchedulerFrequency: 5
+        MemorySize: 128
+        EnableSSMMaintenanceWindows: 'No'
+        EnableRdsScheduler: 'Yes'
+        EnableEc2Scheduler: 'Yes'
+        EnableAwsOrganizations: 'No'
+        ScheduleTagName: Schedule
+        StartedTags: !Sub |
+          [
+            {"Key": "Schedule", "Value": "started"},
+            {"Key": "LastStartTime", "Value": "${AWS::StackName}"}
+          ]
+        StoppedTags: !Sub |
+          [
+            {"Key": "Schedule", "Value": "stopped"},
+            {"Key": "LastStopTime", "Value": "${AWS::StackName}"}
+          ]
+
+  # Business Hours Schedule
+  BusinessHoursSchedule:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/scheduler/${Environment}/business-hours'
+      Type: String
+      Value: |
+        {
+          "timezone": "UTC",
+          "description": "Business hours schedule for cost optimization",
+          "periods": [
+            {
+              "name": "business-hours",
+              "begin": "09:00",
+              "end": "17:00",
+              "weekdays": ["mon-fri"]
+            }
+          ],
+          "type": "schedule"
+        }
+
+  # Development Schedule (shorter hours)
+  DevSchedule:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/scheduler/${Environment}/dev-schedule'
+      Type: String
+      Value: |
+        {
+          "timezone": "UTC",
+          "description": "Development environment schedule",
+          "periods": [
+            {
+              "name": "dev-hours",
+              "begin": "08:00",
+              "end": "18:00",
+              "weekdays": ["mon-fri"]
+            }
+          ],
+          "type": "schedule"
+        }
+
+  # CloudWatch Dashboard for monitoring
+  SchedulerDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${Environment}-instance-scheduler'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${Environment}-asg"],
+                  [".", "NetworkIn", ".", "."],
+                  [".", "NetworkOut", ".", "."]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Instance Performance Metrics"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/Billing", "EstimatedCharges", "Currency", "USD"]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Estimated Charges"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  SchedulerFunctionArn:
+    Description: ARN of the Instance Scheduler Lambda function
+    Value: !GetAtt InstanceScheduler.Outputs.SchedulerFunctionArn
+    Export:
+      Name: !Sub '${AWS::StackName}-SchedulerFunctionArn'
+
+  SchedulerTableName:
+    Description: Name of the DynamoDB table used by the scheduler
+    Value: !GetAtt InstanceScheduler.Outputs.SchedulerTableName
+    Export:
+      Name: !Sub '${AWS::StackName}-SchedulerTableName'

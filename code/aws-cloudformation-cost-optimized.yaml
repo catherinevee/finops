@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Cost-optimized infrastructure with embedded FinOps practices'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Environment type for cost optimization
+  
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type (cost-optimized for environment)
+
+Resources:
+  # Cost-optimized EC2 instance with proper tagging
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: ami-12345678
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: !Sub '${Environment}-compute'
+        - Key: Owner
+          Value: finops-team
+        - Key: Schedule
+          Value: !If 
+            - IsProduction
+            - 'always-on'
+            - 'business-hours'
+
+  # S3 bucket with intelligent tiering
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Environment}-data-${AWS::AccountId}'
+      IntelligentTieringConfigurations:
+        - Id: CostOptimization
+          Status: Enabled
+          Tierings:
+            - AccessTier: DEEP_ARCHIVE_ACCESS
+              Days: 90
+            - AccessTier: ARCHIVE_ACCESS
+              Days: 30
+      LifecycleConfiguration:
+        Rules:
+          - Id: CostOptimization
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, 'prod']
